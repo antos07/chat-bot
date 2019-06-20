@@ -89,8 +89,18 @@ def recieved_msg(bot, upd):
 					log("checking answer for user", chat.id)
 					cur.execute("SELECT answer FROM questions WHERE id = %s", (question_id,))
 					answer = cur.fetchone()[0]
+					
+					cur.execute("UPDATE stats SET total = total + 1 WHERE user_id = %s AND topic_id = %s",
+							(chat.id, topic_id))
+					conn.commit()
+					log("{} rows were affected".format(cur.rowcount))
+					if cur.rowcount == 0:
+						cur.execute("INSERT INTO stats VALUES (%s, %s, 0, 1)", (chat.id, topic_id))
+					log("total questions in topic {} was updated for user {}".format(topic_id, chat.id))
 					if msg == answer:
 						chat.send_message("Правильный ответ")
+						cur.execute("UPDATE stats SET correct = correct + 1 WHERE user_id = %s AND topic_id = %s",
+								(chat.id, topic_id))
 					else:
 						chat.send_message("Неправильноый ответ")
 						chat.send_message('Правильный ответ был "{}"'.format(answer))
@@ -122,7 +132,41 @@ def ask_question(chat):
 
 dp.add_handler(MessageHandler(Filters.text, recieved_msg))
 
+
+def stats(bot, upd):
+	chat = upd.effective_chat
+	log("asked for stats in chat", chat.id)
+	stats_template = 'По теме "{topic}" у вас {correct} правильных ответов из {total}\n'
+	answer = "Вашы статистика правильных ответов:\n"
+
+	with conn.cursor() as cur:
+		cur.execute("SELECT topic_id, correct, total FROM stats WHERE user_id = %s", (chat.id,))
+		stats = cur.fetchall()
+
+		for i in stats:
+			cur.execute('SELECT topic from topics WHERE id = %s', (i[0],))
+			topic = cur.fetchone()[0]
+			answer += stats_template.format(topic = topic, correct = i[1], total = i[2])
+
+	log("answer for chat {} is".format(chat.id), answer)
+	chat.send_message(answer)
+	log("answered in chat", chat.id)
+
+
+dp.add_handler(CommandHandler('stats', stats))
+
+
+def clear():
+	with conn.cursor() as cur:
+		cur.execute("DELETE FROM users")
+		conn.commit()
+		cur.execute("DELETE FROM stats")
+		conn.commit()
+		log("cleared")
+
 updater.start_polling()
 updater.idle()
+if config.DEBUG:
+	clear()
 conn.close()
 log('stopped')

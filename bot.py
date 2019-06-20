@@ -2,6 +2,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
 import config
 import psycopg2 as ps2
+from random import randint
 
 updater = Updater(config.TOKEN)
 dp = updater.dispatcher
@@ -66,7 +67,7 @@ def recieved_msg(bot, upd):
 
 	try:
 		with conn.cursor() as cur:
-			cur.execute("SELECT cur_topic_id, cur_question_id FROm users WHERE user_id = %s", (chat.id,))
+			cur.execute("SELECT cur_topic_id, cur_question_id FROM users WHERE user_id = %s", (chat.id,))
 			topic_id, question_id = cur.fetchone()
 			log('recieved topic_id = {topic}, question_id = {question}'.format(topic = topic_id, question = question_id))
 			if topic_id is None:
@@ -76,16 +77,47 @@ def recieved_msg(bot, upd):
 					chat.send_message("Вы должны выбрать тему")
 				else:
 					topic_id = cur.fetchone()[0]
-					cur.execute("UPDATE users SET cur_topic_id = %s", (topic_id, ))
+					cur.execute("UPDATE users SET cur_topic_id = %s WHERE user_id = %s", (topic_id, chat.id))
 					conn.commit()
 					log('topic_id =', topic_id)
 					ask_question(chat)
+			else:
+				msg = upd.message.text
+				if msg == 'Выбрать тему':
+					choose_topic(chat)
+				else:
+					log("checking answer for user", chat.id)
+					cur.execute("SELECT answer FROM questions WHERE id = %s", (question_id,))
+					answer = cur.fetchone()[0]
+					if msg == answer:
+						chat.send_message("Правильный ответ")
+					else:
+						chat.send_message("Неправильноый ответ")
+						chat.send_message('Правильный ответ был "{}"'.format(answer))
+
+					ask_question(chat)
+
 	except Exception as e:
 		log('error', e)
 
 
 def ask_question(chat):
-	pass
+	log('making question for user', chat.id)
+	with conn.cursor() as cur:
+		cur.execute("SELECT id, question, variants FROM questions WHERE topic_id IN (SELECT cur_topic_id FROM users WHERE user_id = %s)", (chat.id,))
+		question_number = randint(1, cur.rowcount)
+		log('question_number is', question_number)
+		for i in range(question_number - 1):
+			cur.fetchone()
+		question_id, question, variants = cur.fetchone()
+		log("question is:", question, "\n", "variants are:", variants)
+		cur.execute("UPDATE users SET cur_question_id = %s WHERE user_id = %s", (question_id, chat.id))
+		conn.commit()
+		log('cur_question_id was updated for user', chat.id)
+		keyboard = [[variant for variant in variants], ['Выбрать тему']]
+		tg_keyboard = ReplyKeyboardMarkup(keyboard, resize_keyboard = True, one_time_keyboard = True)
+		chat.send_message(question, reply_markup = tg_keyboard)
+		log('question was sent to user', chat.id)
 
 
 dp.add_handler(MessageHandler(Filters.text, recieved_msg))
